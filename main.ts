@@ -1,35 +1,55 @@
-// Entry for the GTA 6 meme bounty: the post on X is the entry, and this
-// program's only job is to hand the post's address (POST.json) to the gate.
-// It validates POST.json first so a missing or malformed entry fails loudly
-// instead of copying garbage to the output.
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+// Hand the GTA 6 meme post to the make.fun gate: copy POST.json from the
+// bot directory into the output directory, but only after the post address
+// inside it has been checked. Anything wrong makes the program fail loudly
+// instead of silently handing over a bad entry.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const BOT_DIR = process.env.MAKEFUN_BOT_DIR ?? '/bot';
-const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-
-const POST_PATH = join(BOT_DIR, 'POST.json');
-if (!existsSync(POST_PATH)) {
-  console.error(`POST.json not found in ${BOT_DIR} — the X post URL is required.`);
+function die(message: string): never {
+  console.error(`gta6-meme-x-01: ${message}`);
   process.exit(1);
 }
-let postUrl: unknown;
+
+const botDir = process.env.MAKEFUN_BOT_DIR ?? '/bot';
+const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+const sourceFile = resolve(botDir, 'POST.json');
+const targetFile = resolve(outDir, 'POST.json');
+
+if (!existsSync(sourceFile)) {
+  die(`no POST.json found under ${botDir}; the X post URL is required`);
+}
+
+let raw: string;
 try {
-  const parsed: unknown = JSON.parse(readFileSync(POST_PATH, 'utf8'));
-  postUrl = (parsed as { url?: unknown }).url;
+  raw = readFileSync(sourceFile, 'utf8');
 } catch (err) {
-  console.error(`POST.json is not valid JSON: ${(err as Error).message}`);
-  process.exit(1);
-}
-if (typeof postUrl !== 'string' || !postUrl.startsWith('https://x.com/')) {
-  console.error('POST.json must contain a valid X post URL in its "url" field.');
-  process.exit(1);
+  die(`could not read ${sourceFile}: ${(err as Error).message}`);
 }
 
-mkdirSync(OUTPUT_DIR, { recursive: true });
+let parsed: unknown;
 try {
-  copyFileSync(POST_PATH, join(OUTPUT_DIR, 'POST.json'));
+  parsed = JSON.parse(raw);
 } catch (err) {
-  console.error(`POST.json could not be copied from ${BOT_DIR}: ${(err as Error).message}`);
-  process.exit(1);
+  die(`POST.json is not valid JSON: ${(err as Error).message}`);
 }
+
+const url = (parsed as { url?: unknown } | null)?.url;
+if (typeof url !== 'string' || url.length === 0) {
+  die('POST.json "url" field is missing or empty; the X post URL is required');
+}
+if (!url.startsWith('https://x.com/')) {
+  die('POST.json "url" must point at x.com, not another site');
+}
+if (!url.includes('/status/')) {
+  die('POST.json "url" must be a post link: it needs a /status/ part');
+}
+
+mkdirSync(outDir, { recursive: true });
+try {
+  writeFileSync(targetFile, raw);
+} catch (err) {
+  die(`could not write ${targetFile}: ${(err as Error).message}`);
+}
+
+console.log(`gta6-meme-x-01: handed the post over: ${url} -> ${targetFile}`);
